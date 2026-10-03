@@ -1,0 +1,8 @@
+# Raw telemetry and real case files NEVER go in git.
+VerticalData/
+*.vbook
+!tests/**/*.vbook
+.vertical-monitor/
+__pycache__/
+*.pyc
+.DS_Store
