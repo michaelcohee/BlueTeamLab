@@ -199,6 +199,8 @@ def hunt(vd, since=None, only=None, include_loopback=False):
     sql = events_view(files) + baseline_views(vd)
     sql += "CREATE VIEW hunt AS SELECT * FROM events WHERE %s;\n" % (
         "ts >= %s::TIMESTAMP" % q(since) if since else "true")
+    scope_out = os.path.join(tmp, "_scope.json")
+    sql += "COPY (SELECT count(*) AS n, min(ts) AS lo, max(ts) AS hi FROM hunt) TO %s (FORMAT JSON);\n" % q(scope_out)
     outs = []
     for rf in rule_files(only):
         meta = rule_meta(rf)
@@ -208,6 +210,7 @@ def hunt(vd, since=None, only=None, include_loopback=False):
         sql += "COPY (%s) TO %s (FORMAT JSON);\n" % (body, q(out))
         outs.append((meta, out))
     run_sql(sql)
+    scope = next(iter(C.read_jsonl(scope_out)), {"n": 0, "lo": None, "hi": None})
 
     hits = []
     for meta, out in outs:
@@ -234,7 +237,7 @@ def hunt(vd, since=None, only=None, include_loopback=False):
     stamp = _dt.datetime.now(_dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     path = os.path.join(hd, "hits-%s.jsonl" % stamp)
     C.write_jsonl(path, hits)
-    return path, hits, since, bmeta
+    return path, hits, since, bmeta, scope
 
 
 def main_baseline(argv):
@@ -255,9 +258,15 @@ def main_hunt(argv):
     ap.add_argument("--include-loopback", action="store_true",
                     help="also score 127.0.0.1 traffic (lab test sessions only)")
     a = ap.parse_args(argv)
-    path, hits, since, bmeta = hunt(C.data_dir(), a.since, a.rule, a.include_loopback)
+    path, hits, since, bmeta, scope = hunt(C.data_dir(), a.since, a.rule, a.include_loopback)
     if not bmeta:
         print("WARNING: no baseline — every destination/binary/item counts as first-seen")
+    if not scope.get("n"):
+        print("WARNING: the hunt window is EMPTY (0 events at/after %s). A baseline --until set to the\n"
+              "         end of your only capture leaves nothing to hunt — baseline one period and hunt a\n"
+              "         later/holdout capture (see docs/SCHEMA.md 'capture window')." % (since or "beginning"))
+    else:
+        print("hunt window: %s events, %s → %s" % (scope["n"], scope.get("lo"), scope.get("hi")))
     print("hunt since %s: %d hit(s) -> %s" % (since or "beginning", len(hits), path))
     for h in hits:
         print("  %s %-3s %s  %s" % (h["hit_id"], h["rule_id"], h["first_ts"], h["summary"]))

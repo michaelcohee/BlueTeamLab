@@ -27,9 +27,20 @@ while true; do
   fi
   last_hour=$hour
   for t in $ORDER; do
-    rows=$(osqueryi --json "${Q[$t]}" 2>>$S/osq.stderr | tr -d '\n')
-    [[ -z $rows ]] && rows='[]'
-    print -r -- "{\"t\":\"$t\",\"capture_ts\":\"$ts\",\"rows\":$rows}" >> $out
+    # Capture exit status AND output. A failed query (bad table/permission) must NOT be
+    # silently written as an empty result — that would hide a lost source. On failure we
+    # record an error marker row and raise the UNHEALTHY flag that lab.sh status reports.
+    rows=$(osqueryi --json "${Q[$t]}" 2>>$S/osq.stderr)
+    rc=$?
+    rows=${rows//$'\n'/}
+    if (( rc != 0 )); then
+      print -r -- "$(date -u +%FT%TZ) osquery query failed (rc=$rc) for table: $t" >> $S/osq.stderr
+      print -r -- "UNHEALTHY osquery $t rc=$rc $(date -u +%FT%TZ)" >> $S/UNHEALTHY
+      print -r -- "{\"t\":\"$t\",\"capture_ts\":\"$ts\",\"error\":\"query_failed\",\"rc\":$rc,\"rows\":[]}" >> $out
+    else
+      [[ -z $rows ]] && rows='[]'
+      print -r -- "{\"t\":\"$t\",\"capture_ts\":\"$ts\",\"rows\":$rows}" >> $out
+    fi
   done
   sleep $INTERVAL &
   wait $!
