@@ -1,0 +1,17 @@
+{
+  "_note": "Thresholds for rules/R*.sql, substituted as {{name}}. Tune after the 24 h and 7-day baselines; record every change in docs/TUNING.md.",
+  "max_evidence": 20,
+  "r1_window_min": 5,
+  "r1_min_new_endpoints": 8,
+  "r1_max_size_cv": 0.15,
+  "r1_min_bytes_each": 1024,
+  "r2_multiplier": 3,
+  "r2_min_bytes": 52428800,
+  "r3_min_conns": 10,
+  "r3_max_jitter": 0.10,
+  "r3_min_interval_s": 10,
+  "r4_min_query_len": 50,
+  "r4_min_label_len": 20,
+  "r4_min_entropy": 3.5,
+  "r4_max_per_min": 100
+}
