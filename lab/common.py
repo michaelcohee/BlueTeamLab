@@ -37,15 +37,37 @@ def lab_root():
 
 
 def refuse_repo_path(path):
-    """Raw data must never sit inside a git work tree (guardrail: raw logs stay out of git)."""
+    """Refuse a path inside a git work tree (guardrail: raw logs / REAL Books stay out of git).
+
+    Walks from the path up to the filesystem root; a `.git` dir OR file (worktrees/submodules
+    use a `.git` file) at any level means the path is tracked somewhere, so we refuse it.
+    """
     p = os.path.abspath(path)
     while True:
-        if os.path.isdir(os.path.join(p, ".git")):
-            raise SystemExit("refusing: %s is inside the git repo at %s; set VERTICALDATA elsewhere" % (path, p))
+        if os.path.exists(os.path.join(p, ".git")):
+            raise SystemExit("refusing: %s is inside the git repo at %s; keep raw data and REAL "
+                             "Books outside any repo (set VERTICALDATA / --out elsewhere)" % (path, p))
         parent = os.path.dirname(p)
         if parent == p:
             return
         p = parent
+
+
+class UnsafeRef(ValueError):
+    """A raw_ref.file that escapes the data dir — refuse it rather than read an arbitrary file."""
+
+
+def safe_join(base, rel):
+    """Resolve `rel` (a raw_ref.file) under `base`, refusing absolute paths, traversal, and
+    symlinks that escape. Returns the real path; raises UnsafeRef otherwise. A hits file can be
+    attacker-shaped, so every raw_ref.file passes through here before it is opened."""
+    if not isinstance(rel, str) or not rel or os.path.isabs(rel) or "\x00" in rel:
+        raise UnsafeRef("bad raw_ref.file: %r" % (rel,))
+    base_real = os.path.realpath(base)
+    target = os.path.realpath(os.path.join(base_real, rel))
+    if target != base_real and not target.startswith(base_real + os.sep):
+        raise UnsafeRef("raw_ref.file escapes data dir: %r" % (rel,))
+    return target
 
 
 # ---------------------------------------------------------------- raw evidence
@@ -62,8 +84,12 @@ def logical_name(path):
 
 
 def physical_path(base, logical):
-    """Find a raw file by its logical (uncompressed) name: NAME or NAME.gz."""
-    p = os.path.join(base, logical)
+    """Find a raw file by its logical (uncompressed) name: NAME or NAME.gz.
+
+    `logical` may come from an untrusted hits file, so it is resolved with safe_join and
+    must stay under `base`; a traversing ref raises UnsafeRef rather than reading elsewhere.
+    """
+    p = safe_join(base, logical)
     if os.path.exists(p):
         return p
     if os.path.exists(p + ".gz"):
@@ -91,8 +117,11 @@ def iter_raw_lines(path, rel_to):
 
 
 def read_raw_line(base, ref):
-    """Return (text, status) for a raw_ref. status: ok | missing | changed."""
-    p = physical_path(base, ref["file"])
+    """Return (text, status) for a raw_ref. status: ok | missing | changed | unsafe."""
+    try:
+        p = physical_path(base, ref.get("file"))
+    except UnsafeRef:
+        return None, "unsafe"
     if p is None:
         return None, "missing"
     with open_text(p) as fh:

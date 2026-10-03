@@ -13,6 +13,7 @@ import collections
 import glob
 import json
 import os
+import re
 import sys
 
 from . import common as C
@@ -43,9 +44,13 @@ class AutoBook(Book):
 
 
 def proc_node_id(proc_key):
-    """Playbook ID convention: proc-<pid>-<YYYYMMDDTHHMMSS> (so hand and auto Books line up)."""
+    """Playbook ID convention: proc-<host>-<pid>-<YYYYMMDDTHHMMSS> (hand and auto Books line up).
+
+    Host is kept (slugged) so Books from two hosts can't collide on the same pid+start.
+    """
     host, pid, start = proc_key.rsplit(":", 2)
-    return "proc-%s-%s" % (pid, start.rstrip("Z"))
+    host = re.sub(r"[^A-Za-z0-9]+", "-", host).strip("-") or "host"
+    return "proc-%s-%s-%s" % (host, pid, start.rstrip("Z"))
 
 
 def ref_str(ref):
@@ -242,6 +247,7 @@ def trace(vd, hit_id, kind, hits_file=None, out_dir=None):
     hit, hit_ref = find_hit(vd, hit_id, hits_file)
     book = build_book(vd, hit, hit_ref, kind, Index(vd))
     out_dir = out_dir or os.path.join(vd, "books", "auto")
+    C.refuse_repo_path(out_dir)   # a REAL Book must never land inside a git work tree
     os.makedirs(out_dir, exist_ok=True)
     path = os.path.join(out_dir, book.id + ".vbook")
     book.save(path)
