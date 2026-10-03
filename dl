@@ -1,0 +1,5 @@
+#!/bin/sh
+# detection-lab entry point. Python 3.9+ standard library + the duckdb CLI.
+cd "$(dirname "$0")" 2>/dev/null && HERE=$(pwd) && cd - >/dev/null
+PY=${PYTHON:-python3}
+PYTHONPATH="$HERE${PYTHONPATH:+:$PYTHONPATH}" exec "$PY" -m lab.cli "$@"
