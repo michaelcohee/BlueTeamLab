@@ -1,0 +1,2 @@
+# Optional, local-only dashboard. The ./dl pipeline itself remains stdlib + DuckDB CLI.
+streamlit>=1.40,<2

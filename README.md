@@ -54,6 +54,23 @@ collect/lab.sh stop
 ./dl trace <hit_id> --kind SIMULATION
 ```
 
+## Local dashboard (optional)
+
+The read-only Streamlit Observatory shows collection status, per-source disk use,
+baseline metadata, hunt hits, and Horizontal draft Books. It does not start collectors,
+run traces, or modify Vertical. The app binds to `127.0.0.1` and disables Streamlit
+usage-stat collection.
+
+```zsh
+python3 -m venv .venv
+.venv/bin/python -m pip install -r requirements-ui.txt
+export VERTICALDATA=~/VerticalData
+.venv/bin/python -m streamlit run dashboard.py
+```
+
+Open the localhost URL printed by Streamlit. Stop it with Ctrl-C. The core `./dl`
+commands do not require Streamlit.
+
 ## Design rules (non-negotiable)
 
 - **proc_key = `host:pid:proc_start` is the only join key.** Never join on pid alone; if the
