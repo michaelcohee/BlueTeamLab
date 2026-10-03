@@ -9,12 +9,19 @@
 -- fires on: a process_path with an outbound socket or attributed connection that is not in
 --   baseline_net_bin.
 -- does not fire on: any binary already seen using the network during baseline.
-SELECT 'R5' AS rule_id, h.host, any_value(h.proc_key) AS proc_key, h.process_path,
+-- note: a TRIAGE trigger, not a verdict. The planned SHA-256 criterion is absent by design
+--   (hash is null until a human runs shasum), so do not infer T1204/T1105 from network use
+--   alone. proc_key is set only when one instance is responsible, else null + member list.
+SELECT 'R5' AS rule_id, h.host,
+       CASE WHEN count(DISTINCT h.proc_key) FILTER (WHERE h.proc_key IS NOT NULL) = 1
+            THEN any_value(h.proc_key) FILTER (WHERE h.proc_key IS NOT NULL) ELSE NULL END AS proc_key,
+       h.process_path,
        h.host || ':' || h.process_path AS group_key, min(h.ts) AS first_ts, max(h.ts) AS last_ts,
        printf('first network use by %s: %d endpoint(s), first %s:%d', h.process_path,
               count(DISTINCT h.dst_ip || ':' || h.dst_port), arg_min(h.dst_ip, h.ts), arg_min(h.dst_port, h.ts)) AS summary,
        {'endpoints': count(DISTINCT h.dst_ip || ':' || h.dst_port), 'events': count(*),
-        'proc_keys': count(DISTINCT h.proc_key)} AS metrics,
+        'process_instances': count(DISTINCT h.proc_key) FILTER (WHERE h.proc_key IS NOT NULL),
+        'member_proc_keys': list(DISTINCT h.proc_key) FILTER (WHERE h.proc_key IS NOT NULL)} AS metrics,
        list(h.raw_ref ORDER BY h.ts) AS evidence
 FROM hunt h
 WHERE h.event_type IN ('socket_seen', 'net_conn')

@@ -5,7 +5,11 @@ from lab.normalize import normalize_session
 from lab.vbook import Book
 from tests import synth as S
 
+import shutil as _sh
+_HAVE_DUCKDB = bool(__import__("os").environ.get("DUCKDB") or _sh.which("duckdb"))
 
+
+@unittest.skipUnless(_HAVE_DUCKDB, "duckdb CLI not installed (Phase 0)")
 class BaselineTests(unittest.TestCase):
     def setUp(self): self.vd = tempfile.mkdtemp(prefix="dl-bl-")
     def tearDown(self): shutil.rmtree(self.vd, ignore_errors=True)
@@ -34,11 +38,12 @@ class BaselineTests(unittest.TestCase):
                                   S.sock_row(900, 43000, "93.184.5.1", 443, "/tmp/fresh")])
             w.conn([S.conn_row(206, "192.168.1.50", 43000, "93.184.5.1", 443, 500, uid="N")])
         self._session("20261001T120330Z", now)
-        _, hits, _, _ = hunt.hunt(self.vd, only=["R5"])  # since defaults to baseline until
+        _, hits, _, _, _ = hunt.hunt(self.vd, only=["R5"])  # since defaults to baseline until
         paths = sorted(h["process_path"] for h in hits)
         self.assertEqual(paths, ["/tmp/fresh"])  # known binary suppressed, fresh one fires
 
 
+@unittest.skipUnless(_HAVE_DUCKDB, "duckdb CLI not installed (Phase 0)")
 class TraceTests(unittest.TestCase):
     def setUp(self): self.vd = tempfile.mkdtemp(prefix="dl-tr-")
     def tearDown(self): shutil.rmtree(self.vd, ignore_errors=True)
@@ -54,7 +59,7 @@ class TraceTests(unittest.TestCase):
         w.eslogger([S.exec_row(3, 900, 400, "/tmp/sneaky", signer="", team="", args=["/tmp/sneaky","-q"])])
         w.flush_osquery()
         normalize_session(sess, os.path.join(self.vd, "norm"))
-        _, hits, _, _ = hunt.hunt(self.vd, since=S.start_str(0), only=["R5"])
+        _, hits, _, _, _ = hunt.hunt(self.vd, since=S.start_str(0), only=["R5"])
         self.assertTrue(hits)
         hid = hits[0]["hit_id"]
 
@@ -72,17 +77,17 @@ class TraceTests(unittest.TestCase):
 
         # a hand Book: same processes, but human confirmed the attribution link
         hand = Book("hand-" + hid, "Hand trace", "SIMULATION")
-        for cur in ("proc-900-20261001T120003", "proc-400-20261001T120002", "proc-1-20261001T120000"):
+        for cur in ("proc-lab-mbp-900-20261001T120003", "proc-lab-mbp-400-20261001T120002", "proc-lab-mbp-1-20261001T120000"):
             hand.add_node(cur, hand.id, "process", cur, "manual", "")
         hand.add_node("trigger", hand.id, "event", "trigger", "", "")
-        hand.add_link("h1", "trigger", "proc-900-20261001T120003", "attributed-to", "confirmed", "lsof at capture")
-        hand.add_link("h2", "proc-900-20261001T120003", "proc-400-20261001T120002", "spawned-by", "confirmed", "lstart match")
-        hand.add_link("h3", "proc-400-20261001T120002", "proc-1-20261001T120000", "spawned-by", "confirmed", "lstart match")
+        hand.add_link("h1", "trigger", "proc-lab-mbp-900-20261001T120003", "attributed-to", "confirmed", "lsof at capture")
+        hand.add_link("h2", "proc-lab-mbp-900-20261001T120003", "proc-lab-mbp-400-20261001T120002", "spawned-by", "confirmed", "lstart match")
+        hand.add_link("h3", "proc-lab-mbp-400-20261001T120002", "proc-lab-mbp-1-20261001T120000", "spawned-by", "confirmed", "lstart match")
         hp = os.path.join(self.vd, "hand.vbook"); hand.save(hp)
 
         r = bookdiff.compare(book, hand)
-        self.assertEqual(r["processes"]["recall"], 1.0)  # auto found every process the human did
-        self.assertEqual(r["honesty_violations"], [])
+        self.assertEqual(r["process_chain"]["recall"], 1.0)  # auto found every process the human did
+        self.assertTrue(r["honesty"]["auto_ok"])
         # human upgraded id-match links to confirmed
         self.assertTrue(r["status_changes_by_human"])
 

@@ -50,7 +50,11 @@ def _is_local(a):
 _CGNAT = ipaddress.ip_network("100.64.0.0/10")
 
 
-def direction(orig, resp):
+def direction(orig, resp, local_orig=None, local_resp=None):
+    """Classify a connection. When Zeek was told its own networks (Site::local_nets), it tags
+    each conn with local_orig/local_resp; we trust those when present (the only reliable way to
+    call direction for global IPv6, where neither address looks private). Otherwise fall back to
+    an RFC-1918/loopback/CGNAT heuristic, which cannot see outbound global IPv6 (documented)."""
     o, r = _ip(orig), _ip(resp)
     if o is None or r is None:
         return None
@@ -58,7 +62,10 @@ def direction(orig, resp):
         return "multicast"
     if o.is_loopback and r.is_loopback:
         return "loopback"
-    lo, lr = _is_local(o), _is_local(r)
+    if local_orig is not None or local_resp is not None:
+        lo, lr = bool(local_orig), bool(local_resp)
+    else:
+        lo, lr = _is_local(o), _is_local(r)
     if lo and not lr:
         return "out"
     if lr and not lo:
@@ -182,8 +189,11 @@ class Session(object):
         lip, rip = ip_str(row.get("local_address")), ip_str(row.get("remote_address"))
         proto = {"6": "tcp", "17": "udp"}.get(str(row.get("protocol")), str(row.get("protocol")))
         if rport and rip and rip not in ("0.0.0.0", "::"):
-            self.sock_index[(lport, rip, rport)].append(
-                (cdt.timestamp(), pk, C.to_int(row.get("pid")), info["path"] if info else None, ref))
+            # Full 5-tuple key (proto + local ip too), so a reused local port or a different
+            # protocol cannot collide into a false id-match. lip may be a wildcard bind
+            # (0.0.0.0/::) in the snapshot; store it and let the matcher treat that as "any".
+            self.sock_index[(proto, lport, rip, rport)].append(
+                (cdt.timestamp(), pk, C.to_int(row.get("pid")), info["path"] if info else None, ref, lip))
         key = ("sock", pk, proto, lip, lport, rip, rport, row.get("state"))
         if key in seen:
             return
@@ -224,7 +234,16 @@ class Session(object):
     def _osq_launchd(self, row, cdt, ref, pidmap, seen):
         args = row.get("program_arguments") or ""
         program = row.get("program") or (args.split(" ")[0] if args else None)
-        self._persist("launchd", row.get("label"), row.get("path"), program, args, cdt, ref, seen)
+        # Classify by plist location: a LaunchDaemon runs as root at boot, a LaunchAgent in a
+        # user session, a GUI login item is different again. R6 and the trace care which.
+        p = (row.get("path") or "").lower()
+        if "/launchdaemons/" in p:
+            kind = "launchd:daemon"
+        elif "/launchagents/" in p:
+            kind = "launchd:agent"
+        else:
+            kind = "launchd:other"
+        self._persist(kind, row.get("label"), row.get("path"), program, args, cdt, ref, seen)
 
     def _osq_startup_items(self, row, cdt, ref, pidmap, seen):
         self._persist("startup_item:" + (row.get("type") or "?"), row.get("name"), row.get("path"),
@@ -251,7 +270,7 @@ class Session(object):
                 cmd = " ".join(str(a) for a in args)[:512] if isinstance(args, list) else None
                 ts = C.parse_time(msg.get("time"))
                 self.events.append(event(
-                    ts=C.iso(ts), capture_ts=C.iso(ts), host=self.host, source="eslogger",
+                    ts=C.iso(ts), capture_ts=None, host=self.host, source="eslogger",
                     event_type="proc_exec", proc_key=pk, pid=pid, ppid=C.to_int(tgt.get("ppid")),
                     proc_start=C.iso(sdt), process_path=exe,
                     process_name=os.path.basename(exe) if exe else None,
@@ -272,7 +291,7 @@ class Session(object):
                 base, mlen, ent = dns_features(q)
                 o, d = r.get("id.orig_h"), r.get("id.resp_h")
                 self.events.append(event(
-                    ts=C.iso(t), capture_ts=C.iso(t), host=self.host, source="zeek", event_type="dns_query",
+                    ts=C.iso(t), capture_ts=None, host=self.host, source="zeek", event_type="dns_query",
                     src_ip=ip_str(o), src_port=C.to_int(r.get("id.orig_p")), dst_ip=ip_str(d),
                     dst_port=C.to_int(r.get("id.resp_p")), proto=r.get("proto"), direction=direction(o, d),
                     dst_domain=q, dns_qtype=r.get("qtype_name"), dns_rcode=r.get("rcode_name"),
@@ -294,7 +313,7 @@ class Session(object):
                 fp = r.get("ja4") or r.get("ja3")
                 self.sni_by_uid[r.get("uid")] = (r.get("server_name"), fp)
                 self.events.append(event(
-                    ts=C.iso(t), capture_ts=C.iso(t), host=self.host, source="zeek", event_type="tls_hello",
+                    ts=C.iso(t), capture_ts=None, host=self.host, source="zeek", event_type="tls_hello",
                     src_ip=ip_str(o), src_port=C.to_int(r.get("id.orig_p")), dst_ip=ip_str(d),
                     dst_port=C.to_int(r.get("id.resp_p")), proto="tcp", direction=direction(o, d),
                     tls_sni=r.get("server_name"), tls_fp=fp, conn_uid=r.get("uid"), raw_ref=ref))
@@ -307,13 +326,13 @@ class Session(object):
                 t = C.parse_time(r.get("ts"))
                 o, d = r.get("id.orig_h"), r.get("id.resp_h")
                 op, dp = C.to_int(r.get("id.orig_p")), C.to_int(r.get("id.resp_p"))
-                dirn = direction(o, d)
+                dirn = direction(o, d, r.get("local_orig"), r.get("local_resp"))
                 ob, rb = C.to_int(r.get("orig_bytes")), C.to_int(r.get("resp_bytes"))
                 out_b, in_b = (rb, ob) if dirn == "in" else (ob, rb)
                 dur = C.to_float(r.get("duration"))
                 sni, fp = self.sni_by_uid.get(r.get("uid"), (None, None))
                 e = event(
-                    ts=C.iso(t), capture_ts=C.iso(t), host=self.host, source="zeek", event_type="net_conn",
+                    ts=C.iso(t), capture_ts=None, host=self.host, source="zeek", event_type="net_conn",
                     src_ip=ip_str(o), src_port=op, dst_ip=ip_str(d), dst_port=dp, proto=r.get("proto"),
                     direction=dirn, bytes_out=out_b, bytes_in=in_b, duration=dur,
                     conn_state=r.get("conn_state"), service=r.get("service"), conn_uid=r.get("uid"),
@@ -338,24 +357,42 @@ class Session(object):
         return lst[i - 1][1] if i else None
 
     def _attribute(self, e, t, dur):
-        """5-tuple + time window against osquery socket snapshots -> id-match or nothing."""
+        """Full-tuple + time window against osquery socket snapshots -> id-match or nothing.
+
+        Match requires proto, the local port, and the remote ip+port to agree, and — when the
+        snapshot recorded a concrete (non-wildcard) local IP — the local IP too. Zeek's proto
+        is lower-case (tcp/udp), matching the normalized socket proto. Window: conn start −5 s
+        to conn end +65 s (osquery samples every 60 s). More than one distinct proc_key in the
+        window is left `ambiguous`, never guessed.
+        """
         if t is None:
             return
+        proto = (e.get("proto") or "").lower()
         if e["direction"] == "in":
-            key = (e["dst_port"], e["src_ip"], e["src_port"])
+            key = (proto, e["dst_port"], e["src_ip"], e["src_port"])
+            local_ip = e["dst_ip"]
         else:
-            key = (e["src_port"], e["dst_ip"], e["dst_port"])
+            key = (proto, e["src_port"], e["dst_ip"], e["dst_port"])
+            local_ip = e["src_ip"]
         cands = self.sock_index.get(key)
         if not cands:
             return
         lo, hi = t.timestamp() - ATTR_BEFORE, t.timestamp() + (dur or 0.0) + ATTR_AFTER
-        hits = [c for c in cands if lo <= c[0] <= hi and c[1]]
+        hits = []
+        for c in cands:
+            ct, pk, pid, path, ref, snap_lip = c
+            if not (lo <= ct <= hi) or not pk:
+                continue
+            # snapshot local IP must match unless it was a wildcard bind (0.0.0.0/::/None)
+            if snap_lip and snap_lip not in ("0.0.0.0", "::") and local_ip and snap_lip != local_ip:
+                continue
+            hits.append(c)
         keys = {c[1] for c in hits}
         if len(keys) == 1:
-            c = hits[0]
-            info = self.proc_info.get(c[1], {})
-            e.update(proc_key=c[1], pid=c[2], process_path=c[3], proc_start=info.get("proc_start"),
-                     attribution="id-match", attribution_ref=c[4])
+            ct, pk, pid, path, ref, snap_lip = hits[0]
+            info = self.proc_info.get(pk, {})
+            e.update(proc_key=pk, pid=pid, process_path=path, proc_start=info.get("proc_start"),
+                     attribution="id-match", attribution_ref=ref)
         elif len(keys) > 1:
             e["attribution"] = "ambiguous"
 

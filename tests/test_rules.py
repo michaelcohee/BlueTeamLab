@@ -4,6 +4,9 @@ from lab import common as C, hunt
 from lab.normalize import normalize_session
 from tests import synth as S
 
+import shutil as _sh
+_HAVE_DUCKDB = bool(__import__("os").environ.get("DUCKDB") or _sh.which("duckdb"))
+
 
 def build(fn):
     vd = tempfile.mkdtemp(prefix="dl-test-")
@@ -18,7 +21,7 @@ def build(fn):
 
 def run(vd, since=0, rule=None, loopback=False):
     # no baseline built -> everything after `since` is in scope, nothing is "known"
-    _, hits, _, _ = hunt.hunt(vd, since=S.start_str(since), only=[rule] if rule else None, include_loopback=loopback)
+    _, hits, _, _, _ = hunt.hunt(vd, since=S.start_str(since), only=[rule] if rule else None, include_loopback=loopback)
     return hits
 
 
@@ -26,6 +29,7 @@ def ids(hits):
     return sorted(h["rule_id"] for h in hits)
 
 
+@unittest.skipUnless(_HAVE_DUCKDB, "duckdb CLI not installed (Phase 0)")
 class RuleTests(unittest.TestCase):
     def setUp(self):
         self.vds = []
