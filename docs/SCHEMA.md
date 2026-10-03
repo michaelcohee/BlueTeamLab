@@ -8,7 +8,7 @@ below; a value the source did not provide is `null`, never guessed. Written by `
 | Field | Source | Meaning |
 |-------|--------|---------|
 | `ts` | event | event time, UTC ISO-8601 (`...Z`) — DuckDB reads it as TIMESTAMP |
-| `capture_ts` | collector | when the collector recorded it |
+| `capture_ts` | collector | collector receipt time. Set for osquery samples (the sample time). **null** for Zeek and eslogger — their streams don't carry a cheap receipt time, so it is not faked to equal `ts`. |
 | `host` | session.json | hostname; the prefix of every proc_key |
 | `source` | — | `zeek` · `osquery` · `eslogger` |
 | `event_type` | — | `net_conn` · `dns_query` · `tls_hello` · `proc_exec` · `proc_seen` · `socket_seen` · `listen_port` · `persistence_item` |
@@ -50,16 +50,32 @@ below; a value the source did not provide is `null`, never guessed. Written by `
 
 | Field | Meaning |
 |-------|---------|
-| `attribution` | `none` · `id-match` · `ambiguous`. A Zeek connection becomes `id-match` only when exactly one osquery socket snapshot matches its 5-tuple within the time window (−5 s … +duration+65 s, since osquery samples every 60 s). `ambiguous` = more than one process matched. |
+| `attribution` | `none` · `id-match` · `ambiguous`. A Zeek connection becomes `id-match` only when exactly one osquery socket snapshot matches on the **full tuple** — protocol, local port, remote ip, remote port, and (when the snapshot bound a concrete local IP) the local IP — within the time window (−5 s … +duration+65 s, since osquery samples every 60 s). More than one distinct process in the window → `ambiguous`, never guessed. |
 | `attribution_ref` | `raw_ref` of the osquery socket row that produced the match |
 
 **Never** promote `id-match` to `confirmed` in code. That is a human judgment, recorded in
 Vertical with live evidence (`lsof -nP -i -a -p <pid>` at capture time).
 
-## Known approximations (documented, not bugs)
+## Capture window (baseline vs hunt)
 
-- `dns_base_domain` = last two labels; wrong for `co.uk`-style public suffixes.
+`dl baseline --until T` learns "normal" from events **before T**; `dl hunt --since T` scores
+events **at/after T**. The first 24-hour capture is a size/noise **pilot**, not a validated
+baseline — an hourly p99 (R2) or day/week rhythm needs more. Do not point `baseline --until`
+at the end of your only capture: the default hunt window would then be empty (and `dl hunt`
+now warns loudly when it is). Build the baseline from one period and hunt a **disjoint later /
+holdout capture**.
+
+## Direction and known approximations (documented, not bugs)
+
+- `direction` prefers Zeek's `local_orig`/`local_resp`, which Zeek sets because `lab.sh` passes
+  it the private/loopback/link-local/ULA nets as `Site::local_nets`. Your Mac's own **global
+  IPv6** prefix is not in that list, so an outbound global-IPv6 connection can still read as
+  `other`. Add your delegated prefix to `LOCAL_NETS` in `collect/lab.sh` to fix it on your host.
+- `dns_base_domain` = last two labels; wrong for `co.uk`-style public suffixes. Encrypted DNS
+  (DoH/DoT) is invisible to Zeek DNS, so R4 only sees cleartext DNS.
 - Attribution misses connections shorter than the gap between osquery samples.
 - Zeek on `en0` cannot see loopback traffic; emulation uses `lab.sh start --lo0` + `--include-loopback`.
-- A process that started before collection has no `proc_start` from eslogger and may be
-  unattributed until an osquery `processes` sample catches it.
+- `proc_key` start time is second-precision (osquery's `start_time`); a same-second PID reuse
+  could in principle collide. A process that started before collection may be unattributed
+  until an osquery `processes` sample catches it.
+- Zeek `orig_bytes`/`resp_bytes` are payload estimates, not exact wire bytes.

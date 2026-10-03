@@ -20,3 +20,26 @@ change here with the baseline it was measured against, so the portfolio shows th
 - R3 expect NTP/update-checkers/push keepalives to fire first; allow-list them by endpoint.
 - R4 CDN/anti-malware hashed labels are the usual FP; `dns_base_domain` is approximate.
 - R5/R6 fire on every install/update; triage by signer/team_id and item owner, not by firing.
+
+## Audit follow-ups (GPT, 2026-10-03) — validate against real data before publishing
+- ATT&CK IDs in rule headers are **analytic hypotheses**, not verdicts. R1/R2 are limited
+  TA0010 (Exfiltration) hypotheses; R3/R4 limited TA0011 (C2). None proves exfil or C2 — in
+  particular T1048 (different protocol) vs T1041 (over existing C2) cannot be told apart from
+  this telemetry. Say so in any write-up.
+- R1: the planned "4+2 shard" emulation sends **6** endpoints, below the 8-endpoint threshold.
+  Either raise the emulation to ≥8 endpoints or lower `r1_min_new_endpoints` for the test; the
+  fixed 5-minute bucket can also split a real burst — consider a sliding window when tuning.
+- R2: a path absent from baseline gets p99=0, so the floor alone fires. Require enough baseline
+  hours before trusting the ×p99 test; it is a path-level analytic, now labelled as such, and
+  reports process_instances + member_proc_keys instead of one arbitrary proc_key.
+- R3: jitter is measured over the whole hunt period — use bounded windows + an endpoint/process
+  allowlist; NTP, push, updaters and monitoring will match first.
+- R4: use a public-suffix list for the base domain; require repeated behaviour before escalating.
+- R5: triage trigger only; add signer/hash at hand-review, don't infer T1204/T1105 from network use.
+- R6: classify LaunchAgent vs LaunchDaemon vs login item by plist location/owner; cover modern
+  Login/Background Items with `sfltool dumpbtm` (manual).
+
+## Containment note (from audit)
+`kill -STOP` preserves state, but the later `kill -9` destroys volatile process evidence.
+Capture process/socket/open-file (and any needed memory) state BEFORE the kill, and make the
+order conditional on ongoing harm. Don't describe the sequence as universally evidence-preserving.
