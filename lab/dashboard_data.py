@@ -91,7 +91,8 @@ def load_snapshot(root_string):
     result = {"root": str(root), "exists": root.is_dir(), "cap_bytes": cap_gb * GIB,
               "floor_bytes": floor_gb * GIB, "sessions": [], "active": None,
               "used_bytes": 0, "free_bytes": None, "guard_lines": [],
-              "baseline": None, "latest_hits": None, "books": []}
+              "baseline": None, "latest_hits": None, "books": [],
+              "norm_count": 0, "hits_count": 0}
     if not root.is_dir():
         return result
     result["active"] = _active_session(root)
@@ -126,9 +127,13 @@ def load_snapshot(root_string):
                                                   for source, filename in (("Zeek", "zeek-%s.stderr" % iface),
                                                                            ("eslogger", "eslogger.stderr"),
                                                                            ("osquery", "osq.stderr"))}})
+    norm_dir = root / "norm"
+    if norm_dir.is_dir():
+        result["norm_count"] = sum(1 for p in norm_dir.glob("*.jsonl") if p.is_file() and not p.is_symlink())
     hits_dir = root / "hits"
     if hits_dir.is_dir():
         files = sorted(hits_dir.glob("hits-*.jsonl"), reverse=True)
+        result["hits_count"] = len(files)
         if files:
             result["latest_hits"] = files[0].name
     books_dir = root / "books" / "auto"
