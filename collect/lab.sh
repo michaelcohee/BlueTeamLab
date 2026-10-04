@@ -27,6 +27,8 @@ die() { print -u2 "lab.sh: $*"; exit 1; }
 
 need() { command -v "$1" >/dev/null 2>&1 || die "missing $1 (see PHASE0.md)"; }
 
+positive_int() { [[ ${1:-} == <-> ]] && (( $1 > 0 )); }
+
 session_dir() { [[ -f $RUN/session ]] && cat $RUN/session; }
 
 is_running() { [[ -f $1 ]] && sudo kill -0 "$(cat $1)" 2>/dev/null; }
@@ -109,12 +111,19 @@ start() {
   while [[ ${1:-} == --* ]]; do
     case $1 in
       --lo0) lo0=1 ;;
-      --hours) shift; max_secs=$(( ${1:?--hours needs a number} * 3600 )) ;;
+      --hours)
+        shift
+        positive_int "${1:-}" || die "--hours needs a positive whole number"
+        max_secs=$(( $1 * 3600 ))
+        ;;
       *) die "unknown start option: $1" ;;
     esac
     shift
   done
-  need zeek; need osqueryi; need eslogger
+  need zeek; need osqueryi; need eslogger; need jq
+  case "$IFACE" in
+    (''|*[!A-Za-z0-9._:-]*) die "unsafe interface name: $IFACE" ;;
+  esac
   [[ -n "$(session_dir)" ]] && die "a session is already active: $(session_dir) (run stop first)"
   refuse_repo "$VD"
   mkdir -p $RUN $VD/raw; chmod 700 $VD
@@ -125,31 +134,38 @@ start() {
 
   local stamp=$(date -u +%Y%m%dT%H%M%SZ)
   local S=$VD/raw/$stamp
-  mkdir -p $S/zeek-$IFACE
-  print -r -- $S > $RUN/session
+  mkdir -p "$S/zeek-$IFACE"
+  print -r -- "$S" > "$RUN/session"
   # Session metadata the normalizer needs. Host name is the proc_key prefix.
-  {
-    print -r -- "{\"session\":\"$stamp\",\"host\":\"$(scutil --get LocalHostName 2>/dev/null || hostname -s)\","\
-"\"iface\":\"$IFACE\",\"lo0\":$lo0,\"max_secs\":$max_secs,\"macos\":\"$(sw_vers -productVersion)\",\"started\":\"$(date -u +%FT%TZ)\"}"
-  } > $S/session.json
+  local host=$(scutil --get LocalHostName 2>/dev/null || hostname -s)
+  local macos=$(sw_vers -productVersion)
+  local started=$(date -u +%FT%TZ)
+  jq -nc --arg session "$stamp" --arg host "$host" --arg iface "$IFACE" \
+    --argjson lo0 "$lo0" --argjson max_secs "$max_secs" --arg macos "$macos" \
+    --arg started "$started" \
+    '{session:$session,host:$host,iface:$iface,lo0:$lo0,max_secs:$max_secs,macos:$macos,started:$started}' \
+    > "$S/session.json"
 
   # Each daemon writes its own PID (exec keeps the PID) so stop can signal it directly.
   # Zeek rotates its logs hourly so a long capture does not grow one unbounded file; the guard
   # gzips rotated files from previous hours.
-  sudo zsh -c "cd '$S/zeek-$IFACE' && echo \$\$ > '$RUN/zeek.pid' && exec zeek -C -i $IFACE LogAscii::use_json=T Log::default_rotation_interval=3600sec '$LOCAL_NETS'" \
-    > $S/zeek-$IFACE.stderr 2>&1 &
+  sudo zsh -c 'cd "$1" && print -r -- "$$" > "$2" && exec zeek -C -i "$3" LogAscii::use_json=T Log::default_rotation_interval=3600sec "$4"' \
+    zsh "$S/zeek-$IFACE" "$RUN/zeek.pid" "$IFACE" "$LOCAL_NETS" \
+    > "$S/zeek-$IFACE.stderr" 2>&1 &
   if (( lo0 )); then
-    mkdir -p $S/zeek-lo0
-    sudo zsh -c "cd '$S/zeek-lo0' && echo \$\$ > '$RUN/zeek-lo0.pid' && exec zeek -C -i lo0 LogAscii::use_json=T Log::default_rotation_interval=3600sec '$LOCAL_NETS'" \
-      > $S/zeek-lo0.stderr 2>&1 &
+    mkdir -p "$S/zeek-lo0"
+    sudo zsh -c 'cd "$1" && print -r -- "$$" > "$2" && exec zeek -C -i lo0 LogAscii::use_json=T Log::default_rotation_interval=3600sec "$3"' \
+      zsh "$S/zeek-lo0" "$RUN/zeek-lo0.pid" "$LOCAL_NETS" \
+      > "$S/zeek-lo0.stderr" 2>&1 &
   fi
-  sudo zsh -c "echo \$\$ > '$RUN/eslogger.pid' && exec eslogger exec > '$S/eslogger_exec.jsonl'" \
-    2> $S/eslogger.stderr &
-  sudo zsh -c "echo \$\$ > '$RUN/osq.pid' && exec '$HERE/osq_loop.sh' '$S'" \
-    > $S/osq.stderr 2>&1 &
+  sudo zsh -c 'print -r -- "$$" > "$1" && exec eslogger exec > "$2"' \
+    zsh "$RUN/eslogger.pid" "$S/eslogger_exec.jsonl" 2> "$S/eslogger.stderr" &
+  sudo zsh -c 'print -r -- "$$" > "$1" && exec "$2" "$3"' \
+    zsh "$RUN/osq.pid" "$HERE/osq_loop.sh" "$S" > "$S/osq.stderr" 2>&1 &
   # Guard runs as root so it can stop root collectors without a later sudo prompt.
-  touch $VD/guard.log
-  sudo LAB_MAX_SECS=$max_secs zsh -c "echo \$\$ > '$RUN/guard.pid' && exec '$HERE/guard.sh' '$VD'" >> $VD/guard.log 2>&1 &
+  touch "$VD/guard.log"
+  sudo LAB_MAX_SECS="$max_secs" zsh -c 'print -r -- "$$" > "$1" && exec "$2" "$3"' \
+    zsh "$RUN/guard.pid" "$HERE/guard.sh" "$VD" >> "$VD/guard.log" 2>&1 &
 
   sleep 4
   healthcheck $S
@@ -205,6 +221,7 @@ status() {
 
 dryrun() {
   local m=${1:-5}
+  positive_int "$m" || die "dryrun minutes must be a positive whole number"
   start
   print "dry run: collecting for $m minute(s)…"
   sleep $(( m * 60 ))
@@ -220,5 +237,5 @@ case ${1:-} in
   stop) stop ;;
   status) status ;;
   dryrun) shift; dryrun "$@" ;;
-  *) print "usage: lab.sh start [--lo0] | stop | status | dryrun [MIN]"; exit 2 ;;
+  *) print "usage: lab.sh start [--lo0] [--hours N] | stop | status | dryrun [MIN]"; exit 2 ;;
 esac

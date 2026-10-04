@@ -7,7 +7,7 @@ Honesty rules (enforced in code, see AutoBook):
   * anything not in the data becomes a `gap` node naming the manual step that would close it;
   * no verdict, no containment, no shell commands, no network. Files in, one file out.
 
-The Book is a draft for Rali0s's hand trace in Vertical; `dl diff` scores the two.
+The Book is a draft for an analyst's hand trace in Vertical; `dl diff` scores the two.
 """
 import collections
 import glob

@@ -1,9 +1,41 @@
 # Raw telemetry and real case files NEVER go in git.
 VerticalData/
+raw/
+norm/
+hits/
+baseline/
+books/
+run/
 *.vbook
 !tests/**/*.vbook
 .vertical-monitor/
+*.jsonl
+*.ndjson
+*.log
+*.pcap
+*.pcapng
+*.dmp
+*.core
+*.crash
+*.duckdb
+*.db
+*.sqlite
+*.sqlite3
+
+# Credentials and machine-local configuration.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.mobileconfig
+
+# Python, editors, and operating-system state.
 __pycache__/
 *.pyc
 .DS_Store
 .venv/
+.idea/
+.vscode/

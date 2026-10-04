@@ -1,0 +1,13 @@
+#!/bin/sh
+# Blueware Stream launcher. Uses the project venv when present.
+cd "$(dirname "$0")" 2>/dev/null && HERE=$(pwd) && cd - >/dev/null
+if [ -x "$HERE/.venv/bin/python" ]; then
+  PY="$HERE/.venv/bin/python"
+else
+  PY=${PYTHON:-python3}
+fi
+if ! "$PY" -c 'import cement' >/dev/null 2>&1; then
+  echo "blueware: Cement is missing; run: $PY -m pip install -r $HERE/requirements-cli.txt" >&2
+  exit 2
+fi
+PYTHONPATH="$HERE${PYTHONPATH:+:$PYTHONPATH}" exec "$PY" -m lab.blueware_cli "$@"

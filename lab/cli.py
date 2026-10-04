@@ -8,6 +8,12 @@ USAGE = """usage: dl <command> [args]
   trace HIT_ID --kind REAL|SIMULATION   Horizontal: hit -> [AUTO] .vbook
   diff AUTO.vbook HAND.vbook      score Horizontal against a hand trace
   check BOOK.vbook                parse + validate a Book with Vertical's rules
+  stream analyze FILE [--signature-db DB]    verify/recover chunks + match known content
+  stream simulate [--drop N] [--parity]      emit a simple XOR teaching stream
+  stream simulate-rs [--drop N ...]           emit a RedTail-X-style 4+2 stripe
+  stream compare-matrices [--input FILE]       compare saved GF(256) formula arrays
+  stream envelope FILE [--drop N ...]          wrap a file as explicit message chunks
+  stream canonize FILE... --reference-class C  build classified known-content signatures
   test                            run the test suite (synthetic data only)
 Data lives in $VERTICALDATA (default ~/VerticalData), never in this repo."""
 
@@ -38,6 +44,9 @@ def main(argv):
             b = Book.load(p)
             print("%s: OK  %s [%s] %d nodes %d links" % (p, b.id, b.kind, len(b.nodes), len(b.links)))
         return 0
+    if cmd == "stream":
+        from . import stream
+        return stream.main(rest)
     if cmd == "test":
         import os
         import unittest

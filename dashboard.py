@@ -1,7 +1,9 @@
 """Local, read-only Streamlit view for detection-lab telemetry and case drafts."""
 
 from collections import Counter
+import html
 import os
+import shutil
 
 import streamlit as st
 
@@ -9,56 +11,64 @@ from lab import common as C
 from lab.dashboard_data import MIB, human_bytes, load_book, load_hits, load_snapshot
 from lab.vbook import VBookError
 
-st.set_page_config(page_title="Detection Lab · Observatory", page_icon="◈", layout="wide",
+st.set_page_config(page_title="Detection Lab · Observatory", layout="wide",
                    initial_sidebar_state="expanded")
 
 st.markdown("""
 <style>
-  .block-container {max-width: 1320px; padding-top: 2rem; padding-bottom: 4rem;}
-  [data-testid="stSidebar"] {border-right: 1px solid #273b45;}
-  .eyebrow {font-size:.72rem; letter-spacing:.19em; text-transform:uppercase; color:#79c9c3; font-weight:700;}
-  .hero {padding:1.8rem 2rem; border:1px solid #2c4850; border-radius:18px;
-         background:linear-gradient(120deg,#142d34 0%,#10232c 55%,#183b42 100%); margin-bottom:1rem;
-         position:relative; overflow:hidden;}
-  .hero::after {content:""; position:absolute; top:-40%; right:-6%; width:320px; height:320px;
-         background:radial-gradient(circle,#2bd1c2 0%,transparent 68%); opacity:.12;}
-  .hero h1 {font-size:2.25rem; line-height:1.1; margin:.45rem 0 .55rem; color:#f2efe5;}
-  .hero p {color:#a9bfc2; margin:0; max-width:760px;}
+  :root {--ink:#f2efe5; --muted:#9eb5b9; --teal:#58d4c6; --line:#2a4852; --panel:#112b34;}
+  header[data-testid="stHeader"] {background:transparent;}
+  [data-testid="stToolbar"], [data-testid="stDecoration"] {display:none;}
+  .block-container {max-width:1320px; padding-top:1.35rem; padding-bottom:3.5rem;}
+  [data-testid="stSidebar"] {border-right:1px solid #27444d; background:#0d2830;}
+  [data-testid="stSidebar"] .block-container {padding-top:2.2rem;}
+  .eyebrow {font-size:.7rem; letter-spacing:.2em; text-transform:uppercase; color:#78d7ce; font-weight:750;}
+  .hero {padding:1.55rem 1.8rem; border:1px solid #2b4a54; border-radius:14px;
+         background:#112d36; margin-bottom:.9rem;}
+  .hero-grid {display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center; gap:2rem;}
+  .hero h1 {font-size:2.15rem; line-height:1.08; margin:.45rem 0 .55rem; color:var(--ink);}
+  .hero p {color:#aec2c5; margin:0; max-width:760px;}
+  .hero-side {display:flex; align-items:center; gap:1.3rem; min-width:280px;}
+  .hero-stat {padding-left:1.3rem; border-left:1px solid #31515b; color:#a7bdc1; font-size:.77rem;}
+  .hero-stat strong {display:block; color:var(--ink); font-size:.92rem; margin-bottom:.2rem;}
   .section-heading {font-size:1.05rem; color:#efe9da; letter-spacing:.02em; margin:.9rem 0 .45rem;}
   .status {display:inline-block; border-radius:99px; padding:.3rem .75rem; font-size:.75rem;
-           font-weight:700; letter-spacing:.06em; text-transform:uppercase; margin-bottom:.8rem;}
+           font-weight:700; letter-spacing:.06em; text-transform:uppercase;}
   .status.ok {background:#17473f; color:#9de5cc;}
   .status.warn {background:#513c21; color:#f5cd8a;}
-  .status.idle {background:#283b44; color:#adc5ca;}
+  .status.idle {background:#283f48; color:#c6d6d8;}
   .small-note {color:#93aab0; font-size:.82rem;}
+  .mission-kicker {font-size:.68rem; letter-spacing:.2em; text-transform:uppercase; color:#75d9cf;
+                   font-weight:750; margin-bottom:.35rem;}
+  .mission-title {font-size:2rem; line-height:1.1; color:var(--ink); font-weight:760; margin:0 0 .4rem;}
+  .mission-copy {color:#afc2c5; font-size:.98rem; max-width:790px; margin-bottom:.35rem;}
+  .readiness {display:grid; grid-template-columns:1.2fr 2fr auto; gap:1rem; align-items:center;
+              padding:.85rem 0; border-top:1px solid #294751;}
+  .readiness strong {color:#edf0e9;}
+  .readiness span {color:#9eb4b8; font-size:.86rem;}
+  .ready {color:#72e1c8 !important; font-size:.7rem !important; letter-spacing:.12em; font-weight:750;}
+  .next {color:#88ccff !important; font-size:.7rem !important; letter-spacing:.12em; font-weight:750;}
+  .journey {display:grid; grid-template-columns:repeat(5,1fr); border-top:1px solid #41606a; margin-top:1rem;}
+  .journey-step {padding:.8rem .9rem 0 0; color:#829ca2; min-height:92px;}
+  .journey-step + .journey-step {padding-left:1rem; border-left:1px solid #27434c;}
+  .journey-step b {display:block; color:#a8bdc1; margin:.25rem 0;}
+  .journey-step.active {color:#aedbd6; border-top:3px solid var(--teal); margin-top:-2px;}
+  .journey-step.active b {color:var(--ink);}
+  .journey-step small {font-size:.76rem; line-height:1.4;}
+  div[data-testid="stVerticalBlockBorderWrapper"] {border-color:#2c4d57; background:#112a33; border-radius:14px;}
+  [data-testid="stCode"] {border:1px solid #345763; border-radius:9px;}
   div[data-testid="stMetric"] {border:1px solid #2b434d; background:#172b34; padding:1rem 1.15rem;
-                                  border-radius:14px; min-height:112px; border-top:2px solid #2f8e86;}
+                                  border-radius:14px; min-height:112px;}
   div[data-testid="stMetricLabel"] {color:#a9c1c3;}
   div[data-testid="stMetricValue"] {color:#f4f0e6;}
-
-  /* pipeline progress strip */
-  .pipe {display:flex; gap:.5rem; flex-wrap:wrap; margin:.2rem 0 1.1rem;}
-  .stage {flex:1 1 170px; min-width:150px; border-radius:13px; padding:.75rem .9rem;
-          border:1px solid #2b434d; background:#14272f; position:relative;}
-  .stage .n {font-size:.68rem; letter-spacing:.14em; text-transform:uppercase; color:#6f8b91; font-weight:700;}
-  .stage .t {font-size:.98rem; color:#dfe7e3; margin-top:.15rem; font-weight:600;}
-  .stage .s {font-size:.78rem; margin-top:.3rem;}
-  .stage.done {border-color:#2f6f5f; background:#143029;}
-  .stage.done .s {color:#8fe3c6;}
-  .stage.active {border-color:#41B8AE; background:#133b3c; box-shadow:0 0 0 1px #41B8AE inset;}
-  .stage.active .s {color:#7fe7dd;}
-  .stage.pending .s {color:#7f979d;}
-  .stage .dot {position:absolute; top:.8rem; right:.9rem; width:9px; height:9px; border-radius:99px; background:#3a5560;}
-  .stage.done .dot {background:#53c79b;}
-  .stage.active .dot {background:#41B8AE; box-shadow:0 0 0 4px rgba(65,184,174,.22);}
-
-  /* onboarding card */
-  .onboard {border:1px solid #2c4850; border-radius:16px; padding:1.4rem 1.6rem;
-            background:linear-gradient(135deg,#132b32,#102831); margin:.4rem 0 1rem;}
-  .onboard h3 {margin:.1rem 0 .5rem; color:#f2efe5; font-size:1.2rem;}
-  .onboard ol {margin:.4rem 0 .2rem 1.1rem; color:#bcd0d2; line-height:1.9;}
-  .onboard code {background:#0c1c22; border:1px solid #27404a; border-radius:6px;
-                 padding:.08rem .4rem; color:#9fe6dd; font-size:.86rem;}
+  @media (max-width:900px) {
+    .hero-grid {grid-template-columns:1fr; gap:1rem;}
+    .hero-side {justify-content:space-between; min-width:0;}
+    .journey {grid-template-columns:1fr; border-top:0;}
+    .journey-step, .journey-step + .journey-step {border-left:0; border-top:1px solid #294751; padding:.7rem 0; min-height:0;}
+    .readiness {grid-template-columns:1fr auto;}
+    .readiness span:nth-child(2) {display:none;}
+  }
 </style>
 """, unsafe_allow_html=True)
 
@@ -74,7 +84,7 @@ def hits(root, filename):
 
 
 with st.sidebar:
-    st.markdown('<div class="eyebrow">◈ DETECTION LAB</div>', unsafe_allow_html=True)
+    st.markdown('<div class="eyebrow">DETECTION LAB</div>', unsafe_allow_html=True)
     st.markdown("### Observatory")
     st.caption("Local telemetry · read-only view")
     st.divider()
@@ -91,11 +101,16 @@ data = snapshot(root)
 active = data["active"]
 status_text = "CAPTURE ACTIVE" if active else ("NO DATA DIRECTORY" if not data["exists"] else "COLLECTOR IDLE")
 status_class = "ok" if active else ("warn" if not data["exists"] else "idle")
-st.markdown('<div class="hero"><div class="eyebrow">FIELD NOTES / SINGLE HOST</div>'
-            '<h1>Detection Lab Observatory</h1>'
-            '<p>Capture health, storage headroom, explainable detections, and Horizontal case drafts '
-            'in one local view.</p></div>', unsafe_allow_html=True)
-st.markdown('<span class="status %s">%s</span>' % (status_class, status_text), unsafe_allow_html=True)
+free_text = human_bytes(data["free_bytes"]) if data["free_bytes"] is not None else "Unavailable"
+st.markdown(
+    '<div class="hero"><div class="hero-grid"><div><div class="eyebrow">FIELD NOTES / SINGLE HOST</div>'
+    '<h1>Detection Lab Observatory</h1>'
+    '<p>Capture health, storage headroom, explainable detections, and Horizontal case drafts '
+    'in one local view.</p></div><div class="hero-side">'
+    '<span class="status %s">%s</span><div class="hero-stat"><strong>%s free</strong>3.0 GiB lab budget</div>'
+    '</div></div></div>' % (status_class, status_text, html.escape(free_text)),
+    unsafe_allow_html=True,
+)
 
 
 def pipeline_strip(data):
@@ -115,51 +130,87 @@ def pipeline_strip(data):
     for i, (num, title, val, done_txt, pending_txt) in enumerate(stages):
         cls = "done" if done[i] else ("active" if i == active_idx else "pending")
         sub = done_txt if done[i] else ("next step →" if i == active_idx else pending_txt)
-        cells.append('<div class="stage %s"><span class="dot"></span><div class="n">%s</div>'
-                     '<div class="t">%s</div><div class="s">%s</div></div>' % (cls, num, title, sub))
-    st.markdown('<div class="pipe">' + "".join(cells) + "</div>", unsafe_allow_html=True)
+        cells.append('<div class="journey-step %s"><span>%s</span><b>%s</b><small>%s</small></div>'
+                     % (cls, num, title, html.escape(str(sub))))
+    st.markdown('<div class="journey">' + "".join(cells) + "</div>", unsafe_allow_html=True)
 
 
-if data["exists"]:
+def mission_start(data, root):
+    """Read-only first-run guidance shown until the first collection session exists."""
+    required = ("zeek", "duckdb", "jq", "osqueryi")
+    found = [name for name in required if shutil.which(name)]
+    tools_ready = len(found) == len(required)
+    directory_ready = data["exists"] and os.access(os.path.expanduser(root), os.R_OK | os.W_OK)
+    enough_disk = (data["free_bytes"] is not None and
+                   data["free_bytes"] >= data["floor_bytes"] + data["cap_bytes"])
+    root_label = html.escape(os.path.expanduser(root))
+    tools_label = " · ".join(found) if found else "No required tools found on PATH"
+    with st.container(border=True):
+        intro, estimate = st.columns([4, 1], gap="large")
+        with intro:
+            st.markdown('<div class="mission-kicker">MISSION START</div>'
+                        '<div class="mission-title">Ready for first capture</div>'
+                        '<div class="mission-copy">Check the local environment, then run a five-minute '
+                        'sizing capture. The Observatory stays read-only; commands run in Terminal.</div>',
+                        unsafe_allow_html=True)
+        with estimate:
+            st.metric("Estimated time", "5 minutes")
+            st.caption("Outcome: per-source sizes and a 24-hour storage projection.")
+
+        st.markdown(
+            '<div class="readiness"><strong>1. Tools installed</strong><span>%s</span>'
+            '<span class="%s">%s</span></div>'
+            '<div class="readiness"><strong>2. Data directory ready</strong><span>%s · %s free</span>'
+            '<span class="%s">%s</span></div>'
+            '<div class="readiness"><strong>3. Terminal authorization</strong>'
+            '<span>Grant temporary sudo access, then run the rehearsal.</span>'
+            '<span class="next">YOUR NEXT STEP</span></div>'
+            % (html.escape(tools_label), "ready" if tools_ready else "next", "READY" if tools_ready else "CHECK",
+               root_label, html.escape(free_text), "ready" if directory_ready and enough_disk else "next",
+               "READY" if directory_ready and enough_disk else "CHECK"),
+            unsafe_allow_html=True,
+        )
+        command, note = st.columns([4, 1], gap="large")
+        with command:
+            st.markdown("**1. Authorize this Terminal session**")
+            st.code("sudo -v", language="bash")
+        with note:
+            st.caption("Prompts for your password locally and keeps sudo available briefly.")
+        command, note = st.columns([4, 1], gap="large")
+        with command:
+            st.markdown("**2. Run the five-minute sizing capture**")
+            st.code("collect/lab.sh dryrun 5", language="bash")
+        with note:
+            st.caption("Collects a small sample and reports byte sizes. It does not start the 24-hour run.")
+
+    st.markdown('<div class="mission-kicker" style="margin-top:1.25rem">YOUR JOURNEY</div>'
+                '<div class="small-note">From raw telemetry to explainable case drafts.</div>',
+                unsafe_allow_html=True)
     pipeline_strip(data)
-
-if not data["exists"]:
-    st.markdown('<div class="onboard"><h3>◈ Set up the lab</h3>'
-                '<p class="small-note">No data directory yet. Start with Phase 0:</p>'
-                '<ol><li>Run <code>detection-lab/PHASE0.md</code> (installs Zeek, osquery, DuckDB; grants Full Disk Access)</li>'
-                '<li><code>export VERTICALDATA=~/VerticalData</code></li>'
-                '<li><code>collect/lab.sh dryrun 5</code> — a 5-minute sizing capture</li></ol></div>',
-                unsafe_allow_html=True)
-elif not data["sessions"]:
-    st.markdown('<div class="onboard"><h3>◈ Nothing captured yet — you\'re at step 1</h3>'
-                '<p class="small-note">The pipeline above lights up as data lands. Kick it off with a '
-                'short sizing capture, then normalize and hunt:</p>'
-                '<ol><li><code>collect/lab.sh dryrun 5</code> — 5-minute capture, reports per-source sizes</li>'
-                '<li><code>./dl normalize</code> → <code>./dl baseline --until &lt;UTC&gt;</code> → <code>./dl hunt</code></li></ol>'
-                '<p class="small-note">Everything stays on this Mac. This view only reads files.</p></div>',
-                unsafe_allow_html=True)
 
 tabs = st.tabs(["Overview", "Detections", "Case drafts"])
 
 with tabs[0]:
-    free = data["free_bytes"]
-    used = data["used_bytes"]
-    cap = data["cap_bytes"]
-    cols = st.columns(4)
-    cols[0].metric("Lab data on disk", human_bytes(used))
-    cols[1].metric("Lab budget used", "%.1f%%" % (100 * used / cap) if cap else "—")
-    cols[2].metric("Free disk", human_bytes(free) if free is not None else "—")
-    cols[3].metric("Sessions", str(len(data["sessions"])))
-    st.progress(min(1.0, used / cap) if cap else 0.0, text="Storage budget · %s remaining" % human_bytes(max(0, cap - used)))
-    if free is not None and free < data["floor_bytes"]:
-        st.error("Free disk is below the configured floor of %s." % human_bytes(data["floor_bytes"]))
-    if used >= cap:
-        st.error("Lab data has reached or exceeded the configured cap.")
-
-    st.markdown('<div class="section-heading">Collection sessions</div>', unsafe_allow_html=True)
     if not data["sessions"]:
-        st.info("No captures yet. A five-minute dry run will appear here with per-source sizes.")
+        mission_start(data, root)
     else:
+        pipeline_strip(data)
+        free = data["free_bytes"]
+        used = data["used_bytes"]
+        cap = data["cap_bytes"]
+        cols = st.columns(4)
+        cols[0].metric("Lab data on disk", human_bytes(used))
+        cols[1].metric("Lab budget used", "%.1f%%" % (100 * used / cap) if cap else "—")
+        cols[2].metric("Free disk", human_bytes(free) if free is not None else "—")
+        cols[3].metric("Sessions", str(len(data["sessions"])))
+        st.progress(min(1.0, used / cap) if cap else 0.0,
+                    text="Storage budget · %s remaining" % human_bytes(max(0, cap - used)))
+        if free is not None and free < data["floor_bytes"]:
+            st.error("Free disk is below the configured floor of %s." % human_bytes(data["floor_bytes"]))
+        if used >= cap:
+            st.error("Lab data has reached or exceeded the configured cap.")
+
+        st.markdown('<div class="section-heading">Collection sessions</div>', unsafe_allow_html=True)
         rows = []
         for session in data["sessions"]:
             state = "LIMIT HIT" if session["limit_hit"] else ("RUNNING" if session["active"] else
@@ -185,22 +236,22 @@ with tabs[0]:
             if not any(session["errors"].values()):
                 st.caption("No stderr lines recorded in the known collector files.")
 
-    left, right = st.columns(2)
-    with left:
-        st.markdown('<div class="section-heading">Baseline</div>', unsafe_allow_html=True)
-        base = data["baseline"]
-        if base:
-            st.metric("Events in baseline", f"{base.get('events', 0):,}")
-            st.caption("%s → %s" % (base.get("from_ts") or "?", base.get("to_ts") or "?"))
-            st.caption("Cutoff: %s" % (base.get("until") or "not set"))
-        else:
-            st.info("No baseline built yet.")
-    with right:
-        st.markdown('<div class="section-heading">Guard log</div>', unsafe_allow_html=True)
-        if data["guard_lines"]:
-            st.code("\n".join(data["guard_lines"][-5:]), language="text")
-        else:
-            st.info("The guard has not written a status line yet.")
+        left, right = st.columns(2)
+        with left:
+            st.markdown('<div class="section-heading">Baseline</div>', unsafe_allow_html=True)
+            base = data["baseline"]
+            if base:
+                st.metric("Events in baseline", f"{base.get('events', 0):,}")
+                st.caption("%s → %s" % (base.get("from_ts") or "?", base.get("to_ts") or "?"))
+                st.caption("Cutoff: %s" % (base.get("until") or "not set"))
+            else:
+                st.info("No baseline built yet.")
+        with right:
+            st.markdown('<div class="section-heading">Guard log</div>', unsafe_allow_html=True)
+            if data["guard_lines"]:
+                st.code("\n".join(data["guard_lines"][-5:]), language="text")
+            else:
+                st.info("The guard has not written a status line yet.")
 
 with tabs[1]:
     st.markdown('<div class="section-heading">Explainable hunt results</div>', unsafe_allow_html=True)

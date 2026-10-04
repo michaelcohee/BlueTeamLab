@@ -1,6 +1,6 @@
 # Undercover Blueteamer Lab — Plan v1.0
 
-Author: Claude (design) · Auditor: GPT · Owner: Rali0s · Drafted 2026-10-03
+Author: Claude (design) · Auditor: GPT · Owner: lab owner · Drafted 2026-10-03
 Status: DRAFT for audit. Nothing in this plan changes Vertical's code yet.
 
 > **Archived design draft.** This is the original v1.0 plan, kept for provenance.
@@ -146,9 +146,9 @@ Example — R1 (draft; paths and thresholds to be tuned on real baseline):
 WITH conns AS (
   SELECT proc_key, process_path, dst_ip, bytes_out, ts,
          time_bucket(INTERVAL 5 MINUTE, ts::TIMESTAMP) AS win
-  FROM read_json_auto('~/VerticalData/norm/net-*.jsonl')
+  FROM read_json_auto('/path/outside/repo/VerticalData/norm/net-*.jsonl')
   WHERE event_type = 'net_conn' AND direction = 'out'
-    AND dst_ip NOT IN (SELECT dst_ip FROM read_json_auto('~/VerticalData/baseline/dsts.jsonl'))
+    AND dst_ip NOT IN (SELECT dst_ip FROM read_json_auto('/path/outside/repo/VerticalData/baseline/dsts.jsonl'))
 )
 SELECT proc_key, process_path, win,
        count(DISTINCT dst_ip)                          AS new_dsts,
@@ -215,7 +215,7 @@ Each catalog entry should record macOS version tested, privilege, and output sam
 
 ---
 
-## 8. Vertical changes (proposed roadmap — needs Rali0s's approval)
+## 8. Vertical changes (proposed roadmap — needs lab-owner approval)
 
 | # | Change | Why | Boundary impact |
 |---|--------|-----|-----------------|
@@ -276,7 +276,7 @@ tuning change.
 
 ---
 
-## 12. Open decisions for Rali0s
+## 12. Open decisions for the lab owner
 
 1. Approve V5 (`vertical import`) or keep transfer fully manual?
 2. Run Zeek continuously, or only during hunt sessions (saves disk)?

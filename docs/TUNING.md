@@ -18,7 +18,9 @@ change here with the baseline it was measured against, so the portfolio shows th
 - R2 `r2_min_bytes` 50 MB is the floor so small spikes stay quiet; the x3 multiplier needs a
   real p99, so R2 is only meaningful after the 7-day baseline.
 - R3 expect NTP/update-checkers/push keepalives to fire first; allow-list them by endpoint.
-- R4 CDN/anti-malware hashed labels are the usual FP; `dns_base_domain` is approximate.
+- R4 CDN/anti-malware hashed labels are the usual FP; `dns_base_domain` is approximate and
+  a last-two-label split is wrong for public suffixes such as `co.uk`. DNS events currently
+  have no process attribution, so an R4 hit cannot identify the originating process.
 - R5/R6 fire on every install/update; triage by signer/team_id and item owner, not by firing.
 
 ## Audit follow-ups (GPT, 2026-10-03) — validate against real data before publishing
@@ -34,7 +36,9 @@ change here with the baseline it was measured against, so the portfolio shows th
   reports process_instances + member_proc_keys instead of one arbitrary proc_key.
 - R3: jitter is measured over the whole hunt period — use bounded windows + an endpoint/process
   allowlist; NTP, push, updaters and monitoring will match first.
-- R4: use a public-suffix list for the base domain; require repeated behaviour before escalating.
+- R4: use a public-suffix list for the base domain; require repeated behaviour before
+  escalating; add a resolver or endpoint source that can attribute DNS activity to a
+  `proc_key` before making any process claim.
 - R5: triage trigger only; add signer/hash at hand-review, don't infer T1204/T1105 from network use.
 - R6: classify LaunchAgent vs LaunchDaemon vs login item by plist location/owner; cover modern
   Login/Background Items with `sfltool dumpbtm` (manual).

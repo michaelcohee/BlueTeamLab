@@ -1,4 +1,4 @@
-"""Score an [AUTO] Book (Horizontal) against Rali0s's hand-traced Book (Vertical).
+"""Score an [AUTO] Book (Horizontal) against an analyst's hand-traced Book (Vertical).
 
   dl diff AUTO.vbook HAND.vbook [--json]
 
